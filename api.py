@@ -344,7 +344,16 @@ async def get_dataset_split():
 # Run the application
 if __name__ == "__main__":
 <<<<<<< HEAD
+<<<<<<< HEAD
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
 =======
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
 >>>>>>> c02c3af70cdce397ab5447009d08fea0a281ed55
+=======
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=8000,
+        log_level="info"
+    )
+>>>>>>> 4856cb0 (upgated env)
