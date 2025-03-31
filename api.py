@@ -37,7 +37,7 @@ app.add_middleware(
 )
 
 # Define static directory for images
-STATIC_DIR = "static"
+的基本DIR = "static"
 if not os.path.exists(STATIC_DIR):
     os.makedirs(STATIC_DIR)
 
