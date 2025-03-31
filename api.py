@@ -1,6 +1,6 @@
-# Import necessary libraries
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import pandas as pd
 import numpy as np
@@ -15,6 +15,7 @@ from sklearn.preprocessing import LabelEncoder, StandardScaler
 from typing import List
 import uvicorn
 import io
+import os
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -26,11 +27,16 @@ app = FastAPI(
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],  
-    allow_headers=["*"],  
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
+
+# Define static directory for images
+STATIC_DIR = "static"
+if not os.path.exists(STATIC_DIR):
+    os.makedirs(STATIC_DIR)
 
 # Define input data model for prediction
 class PatientData(BaseModel):
@@ -48,22 +54,26 @@ try:
 except Exception as e:
     raise Exception(f"Error loading model or preprocessors: {str(e)}")
 
+# Performance metrics (hardcoded from your input)
+PERFORMANCE_METRICS = {
+    "loss": 0.3564,
+    "accuracy": 0.8937,
+    "precision": 0.9369,
+    "recall": 0.8937,
+    "f1_score": 0.8688
+}
+
 # Preprocessing function for prediction
 def preprocess_input(data: pd.DataFrame) -> np.ndarray:
     """Preprocess input data for prediction"""
     try:
         df = data.copy()
-        
-        # Apply label encoding
         for col, le in label_encoders.items():
             if col in df.columns:
                 df[col] = le.transform(df[col])
             else:
                 raise ValueError(f"Missing required column: {col}")
-        
-        # Scale age
         df[["age"]] = scaler.transform(df[["age"]])
-        
         return df.values
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error in preprocessing: {str(e)}")
@@ -83,27 +93,19 @@ def predict_drug(X_processed: np.ndarray) -> List[str]:
 def preprocess_data(df: pd.DataFrame):
     """Preprocesses the dataset for training."""
     try:
-        # Define features and target
         X = df.drop('drug', axis=1)
         y = df['drug']
-
-        # Label Encoding for Categorical Features
         label_encoders = {}
         categorical_cols = ["disease", "gender", "severity"]
         for col in categorical_cols:
             le = LabelEncoder()
             X[col] = le.fit_transform(X[col])
             label_encoders[col] = le
-
-        # Encode target variable
         target_encoder = LabelEncoder()
         y_encoded = target_encoder.fit_transform(y)
-
-        # Feature Scaling for Numerical Features
         scaler = StandardScaler()
         numerical_cols = ["age"]
         X[numerical_cols] = scaler.fit_transform(X[numerical_cols])
-
         return X, y_encoded, label_encoders, scaler, target_encoder
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error in preprocessing data: {str(e)}")
@@ -121,46 +123,28 @@ def build_and_train_model(X_train, y_train, X_val, y_val, num_classes):
         BatchNormalization(),
         Dense(num_classes, activation='softmax')
     ])
-
     model.compile(optimizer=Adagrad(learning_rate=0.01),
-                 loss='sparse_categorical_crossentropy',
-                 metrics=['accuracy'])
-
+                  loss='sparse_categorical_crossentropy',
+                  metrics=['accuracy'])
     history = model.fit(X_train, y_train,
-                       epochs=200,
-                       batch_size=32,
-                       validation_data=(X_val, y_val),
-                       verbose=0,  # Silent training for API
-                       callbacks=[EarlyStopping(monitor='val_loss',
-                                              patience=20,
-                                              restore_best_weights=True)])
+                        epochs=200,
+                        batch_size=32,
+                        validation_data=(X_val, y_val),
+                        verbose=0,
+                        callbacks=[EarlyStopping(monitor='val_loss',
+                                                patience=20,
+                                                restore_best_weights=True)])
     return model, history
 
 # GET endpoint for single prediction
 @app.get("/predict/")
-async def get_prediction(
-    disease: str,
-    age: int,
-    gender: str,
-    severity: str
-):
+async def get_prediction(disease: str, age: int, gender: str, severity: str):
     """Get drug prediction for a single patient"""
     try:
-        input_data = pd.DataFrame([{
-            "disease": disease,
-            "age": age,
-            "gender": gender,
-            "severity": severity
-        }])
-        
+        input_data = pd.DataFrame([{"disease": disease, "age": age, "gender": gender, "severity": severity}])
         X_processed = preprocess_input(input_data)
         predictions = predict_drug(X_processed)
-        
-        return {
-            "status": "success",
-            "prediction": predictions[0],
-            "input_data": input_data.to_dict(orient="records")[0]
-        }
+        return {"status": "success", "prediction": predictions[0], "input_data": input_data.to_dict(orient="records")[0]}
     except HTTPException as e:
         raise e
     except Exception as e:
@@ -172,23 +156,10 @@ async def post_batch_prediction(patients: List[PatientData]):
     """Get drug predictions for multiple patients"""
     try:
         input_data = pd.DataFrame([p.dict() for p in patients])
-        
         X_processed = preprocess_input(input_data)
         predictions = predict_drug(X_processed)
-        
-        results = []
-        for i, pred in enumerate(predictions):
-            result = {
-                "input": patients[i].dict(),
-                "prediction": pred
-            }
-            results.append(result)
-        
-        return {
-            "status": "success",
-            "predictions": results,
-            "count": len(results)
-        }
+        results = [{"input": patients[i].dict(), "prediction": pred} for i, pred in enumerate(predictions)]
+        return {"status": "success", "predictions": results, "count": len(results)}
     except HTTPException as e:
         raise e
     except Exception as e:
@@ -199,43 +170,27 @@ async def post_batch_prediction(patients: List[PatientData]):
 async def retrain_model(file: UploadFile = File(...)):
     """Retrain the model with a new dataset"""
     try:
-        # Read the uploaded CSV file
         contents = await file.read()
         df = pd.read_csv(io.BytesIO(contents))
-
-        # Verify required columns
         required_columns = {"disease", "age", "gender", "severity", "drug"}
         if not required_columns.issubset(df.columns):
             missing = required_columns - set(df.columns)
             raise HTTPException(status_code=400, detail=f"Missing columns: {missing}")
-
-        # Preprocess the new data
         X, y, new_label_encoders, new_scaler, new_target_encoder = preprocess_data(df)
-
-        # Split the data
         X_train, X_temp, y_train, y_temp = train_test_split(X, y, test_size=0.40, random_state=42, stratify=y)
         X_val, X_test, y_val, y_test = train_test_split(X_temp, y_temp, test_size=0.40, random_state=42)
-
-        # Build and train the model
         num_classes = len(np.unique(y))
         new_model, history = build_and_train_model(X_train, y_train, X_val, y_val, num_classes)
-
-        # Save the new model and preprocessors
         new_model.save('drug_prescription_model.keras', overwrite=True)
         joblib.dump(new_scaler, 'scaler.pkl')
         joblib.dump(new_target_encoder, 'label_enc.pkl')
         joblib.dump(new_label_encoders, 'label_encoders.pkl')
-
-        # Update global variables
         global model, scaler, label_encoders, target_encoder
         model = new_model
         scaler = new_scaler
         label_encoders = new_label_encoders
         target_encoder = new_target_encoder
-
-        # Evaluate on test set
         test_loss, test_accuracy = model.evaluate(X_test, y_test, verbose=0)
-
         return {
             "status": "success",
             "message": "Model retrained successfully",
@@ -254,11 +209,40 @@ async def health_check():
     """Check if the API is running"""
     return {"status": "healthy", "timestamp": pd.Timestamp.now().isoformat()}
 
+# Endpoint to fetch performance metrics
+@app.get("/metrics")
+async def get_metrics():
+    """Fetch performance metrics of the model"""
+    return {
+        "status": "success",
+        "metrics": PERFORMANCE_METRICS
+    }
+
+# Endpoints to fetch visualization images
+@app.get("/visualizations/age_distribution")
+async def get_age_distribution():
+    """Serve the Age Distribution graph"""
+    file_path = os.path.join(STATIC_DIR, "age_distribution.png")
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Age distribution graph not found")
+    return FileResponse(file_path, media_type="image/png")
+
+@app.get("/visualizations/severity_vs_drug")
+async def get_severity_vs_drug():
+    """Serve the Severity vs. Drug Prescription graph"""
+    file_path = os.path.join(STATIC_DIR, "severity_vs_drug.png")
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Severity vs Drug graph not found")
+    return FileResponse(file_path, media_type="image/png")
+
+@app.get("/visualizations/dataset_split")
+async def get_dataset_split():
+    """Serve the Dataset Split pie chart"""
+    file_path = os.path.join(STATIC_DIR, "dataset_split.png")
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Dataset split graph not found")
+    return FileResponse(file_path, media_type="image/png")
+
 # Run the application
 if __name__ == "__main__":
-    uvicorn.run(
-        app,
-        host="0.0.0.0",
-        port=8000,
-        log_level="info"
-    )
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
