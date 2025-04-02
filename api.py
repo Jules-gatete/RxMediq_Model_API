@@ -269,22 +269,6 @@ async def retrain_model(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error during retraining: {str(e)}")
 
-# NEW GET endpoint for retrieving visualizations
-@app.get("/visualizations/")
-async def get_visualizations():
-    """Retrieve the latest visualization paths"""
-    try:
-        viz_paths = [
-            os.path.join(STATIC_DIR, 'training_history.png'),
-            os.path.join(STATIC_DIR, 'confusion_matrix.png'),
-            os.path.join(STATIC_DIR, 'class_distribution.png')
-        ]
-        # Check if files exist, if not return empty list
-        existing_viz = [path for path in viz_paths if os.path.exists(path)]
-        return {"status": "success", "visualizations": existing_viz}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error retrieving visualizations: {str(e)}")
-
 # Health check endpoint
 @app.get("/health")
 async def health_check():
@@ -294,3 +278,54 @@ async def health_check():
 # Run the application
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
