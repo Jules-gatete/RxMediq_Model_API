@@ -11,10 +11,13 @@ from tensorflow.keras.callbacks import EarlyStopping
 import joblib
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder, StandardScaler
-from typing import List
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
+import matplotlib.pyplot as plt
+import seaborn as sns
 import uvicorn
 import io
 import os
+from typing import List
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -32,7 +35,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Define static directory (though not used for visualizations anymore)
+# Define static directory for saving visualizations
 STATIC_DIR = "static"
 if not os.path.exists(STATIC_DIR):
     os.makedirs(STATIC_DIR)
@@ -126,6 +129,56 @@ def build_and_train_model(X_train, y_train, X_val, y_val, num_classes):
                                                 restore_best_weights=True)])
     return model, history
 
+# Function to calculate metrics
+def calculate_metrics(y_true, y_pred):
+    """Calculate performance metrics"""
+    accuracy = accuracy_score(y_true, y_pred)
+    precision = precision_score(y_true, y_pred, average='weighted', zero_division=0)
+    recall = recall_score(y_true, y_pred, average='weighted', zero_division=0)
+    f1 = f1_score(y_true, y_pred, average='weighted', zero_division=0)
+    return {"accuracy": accuracy, "precision": precision, "recall": recall, "f1_score": f1}
+
+# Function to generate visualizations
+def generate_visualizations(history, y_test, y_pred, target_encoder):
+    """Generate and save training history plot, confusion matrix, and class distribution"""
+    # 1. Training History Plot
+    plt.figure(figsize=(10, 6))
+    plt.plot(history.history['accuracy'], label='Training Accuracy')
+    plt.plot(history.history['val_accuracy'], label='Validation Accuracy')
+    plt.title('Model Accuracy Over Epochs')
+    plt.xlabel('Epoch')
+    plt.ylabel('Accuracy')
+    plt.legend()
+    plt.grid(True)
+    training_plot_path = os.path.join(STATIC_DIR, 'training_history.png')
+    plt.savefig(training_plot_path)
+    plt.close()
+
+    # 2. Confusion Matrix
+    cm = confusion_matrix(y_test, y_pred)
+    plt.figure(figsize=(12, 8))
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
+    plt.title('Confusion Matrix')
+    plt.xlabel('Predicted')
+    plt.ylabel('True')
+    cm_plot_path = os.path.join(STATIC_DIR, 'confusion_matrix.png')
+    plt.savefig(cm_plot_path)
+    plt.close()
+
+    # 3. Class Distribution of Predictions
+    predicted_labels = target_encoder.inverse_transform(y_pred)
+    plt.figure(figsize=(10, 6))
+    sns.countplot(x=predicted_labels, palette='viridis')
+    plt.title('Predicted Class Distribution')
+    plt.xlabel('Drug')
+    plt.ylabel('Count')
+    plt.xticks(rotation=45)
+    class_dist_plot_path = os.path.join(STATIC_DIR, 'class_distribution.png')
+    plt.savefig(class_dist_plot_path)
+    plt.close()
+
+    return [training_plot_path, cm_plot_path, class_dist_plot_path]
+
 # GET endpoint for single prediction
 @app.get("/predict/")
 async def get_prediction(disease: str, age: int, gender: str, severity: str):
@@ -158,7 +211,7 @@ async def post_batch_prediction(patients: List[PatientData]):
 # POST endpoint for retraining the model
 @app.post("/retrain/")
 async def retrain_model(file: UploadFile = File(...)):
-    """Retrain the model with a new dataset"""
+    """Retrain the model with a new dataset and provide metrics and visualizations"""
     global model, scaler, label_encoders, target_encoder
     try:
         contents = await file.read()
@@ -167,6 +220,8 @@ async def retrain_model(file: UploadFile = File(...)):
         if not required_columns.issubset(df.columns):
             missing = required_columns - set(df.columns)
             raise HTTPException(status_code=400, detail=f"Missing columns: {missing}")
+        
+        # Preprocess data
         X, y, new_label_encoders, new_scaler, new_target_encoder = preprocess_data(df)
         X_train, X_temp, y_train, y_temp = train_test_split(X, y, test_size=0.40, random_state=42, stratify=y)
         unique_classes, counts = np.unique(y_temp, return_counts=True)
@@ -175,22 +230,38 @@ async def retrain_model(file: UploadFile = File(...)):
             X_val, X_test, y_val, y_test = train_test_split(X_temp, y_temp, test_size=0.40, random_state=42)
         else:
             X_val, X_test, y_val, y_test = train_test_split(X_temp, y_temp, test_size=0.40, random_state=42, stratify=y_temp)
+        
+        # Train model
         num_classes = len(np.unique(y))
         new_model, history = build_and_train_model(X_train, y_train, X_val, y_val, num_classes)
+        
+        # Evaluate model and calculate metrics
+        y_pred = np.argmax(new_model.predict(X_test), axis=1)
+        metrics = calculate_metrics(y_test, y_pred)
+        
+        # Generate visualizations
+        viz_paths = generate_visualizations(history, y_test, y_pred, new_target_encoder)
+        
+        # Save model and preprocessors
         new_model.save('drug_prescription_model.keras', overwrite=True)
         joblib.dump(new_scaler, 'scaler.pkl')
         joblib.dump(new_target_encoder, 'label_enc.pkl')
         joblib.dump(new_label_encoders, 'label_encoders.pkl')
+        
+        # Update global variables
         model = new_model
         scaler = new_scaler
         label_encoders = new_label_encoders
         target_encoder = new_target_encoder
+        
         test_loss, test_accuracy = model.evaluate(X_test, y_test, verbose=0)
         return {
             "status": "success",
             "message": "Model retrained successfully",
             "test_loss": test_loss,
             "test_accuracy": test_accuracy,
+            "metrics": metrics,
+            "visualizations": viz_paths,
             "dataset_size": len(df)
         }
     except HTTPException as e:
@@ -207,3 +278,4 @@ async def health_check():
 # Run the application
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+
