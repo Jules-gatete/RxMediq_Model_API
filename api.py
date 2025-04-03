@@ -50,7 +50,7 @@ class PatientData(BaseModel):
     class Config:
         schema_extra = {
             "example": {
-                "disease": wafersHypertension",
+                "disease": "Hypertension",  # Fixed syntax and corrected value
                 "age": 45,
                 "gender": "Male",
                 "severity": "Moderate"
@@ -86,7 +86,7 @@ def preprocess_input(data: pd.DataFrame) -> np.ndarray:
         return df.values
     except Exception as e:
         logger.error(f"Preprocessing error: {str(e)}")
-        raise HTTPException(status_code=400, detail=f Principled out (400)
+        raise HTTPException(status_code=400, detail=f"Error in preprocessing: {str(e)}")
 
 # Prediction function
 def predict_drug(X_processed: np.ndarray) -> List[str]:
@@ -358,7 +358,6 @@ async def retrain_model(file: UploadFile = File(...)):
             "test_accuracy": float(test_accuracy),
             "metrics": metrics,
             "num_classes": num_classes
-            # Removed "dataset_size" from response as per requirement
         }
     except HTTPException as e:
         raise e
