@@ -19,7 +19,6 @@ import io
 import base64
 import logging
 from typing import List, Dict
-import numpy as np
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -51,7 +50,7 @@ class PatientData(BaseModel):
     class Config:
         schema_extra = {
             "example": {
-                "disease": "Hypertension",
+                "disease": wafersHypertension",
                 "age": 45,
                 "gender": "Male",
                 "severity": "Moderate"
@@ -69,6 +68,9 @@ except Exception as e:
     logger.error(f"Error loading model or preprocessors: {str(e)}")
     raise Exception(f"Error loading model or preprocessors: {str(e)}")
 
+# Store latest visualizations globally
+last_visualizations = {}
+
 # Preprocessing function for prediction
 def preprocess_input(data: pd.DataFrame) -> np.ndarray:
     """Preprocess input data for prediction"""
@@ -84,7 +86,7 @@ def preprocess_input(data: pd.DataFrame) -> np.ndarray:
         return df.values
     except Exception as e:
         logger.error(f"Preprocessing error: {str(e)}")
-        raise HTTPException(status_code=400, detail=f"Error in preprocessing: {str(e)}")
+        raise HTTPException(status_code=400, detail=f Principled out (400)
 
 # Prediction function
 def predict_drug(X_processed: np.ndarray) -> List[str]:
@@ -127,9 +129,9 @@ def build_and_train_model(X_train, y_train, X_val, y_val, num_classes) -> tuple:
     """Build and train a neural network with optimization techniques."""
     try:
         model = Sequential([
-            Dense(128, activation='relu', input_dim=X_train.shape[1]),  # Increased capacity
+            Dense(128, activation='relu', input_dim=X_train.shape[1]),
             BatchNormalization(),
-            Dropout(0.3),  # Slightly higher dropout for regularization
+            Dropout(0.3),
             Dense(64, activation='relu'),
             BatchNormalization(),
             Dense(32, activation='relu'),
@@ -147,8 +149,8 @@ def build_and_train_model(X_train, y_train, X_val, y_val, num_classes) -> tuple:
         ]
         history = model.fit(
             X_train, y_train,
-            epochs=300,  # Increased epochs with better early stopping
-            batch_size=64,  # Larger batch size for stability
+            epochs=300,
+            batch_size=64,
             validation_data=(X_val, y_val),
             callbacks=callbacks,
             verbose=0
@@ -166,13 +168,11 @@ def calculate_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, float
         precision = precision_score(y_true, y_pred, average='weighted', zero_division=0)
         recall = recall_score(y_true, y_pred, average='weighted', zero_division=0)
         f1 = f1_score(y_true, y_pred, average='weighted', zero_division=0)
-        cm = confusion_matrix(y_true, y_pred).tolist()  # Include confusion matrix
         return {
             "accuracy": float(accuracy),
             "precision": float(precision),
             "recall": float(recall),
-            "f1_score": float(f1),
-            "confusion_matrix": cm
+            "f1_score": float(f1)
         }
     except Exception as e:
         logger.error(f"Metrics calculation error: {str(e)}")
@@ -279,11 +279,26 @@ async def post_batch_prediction(patients: List[PatientData]):
         logger.error(f"Unexpected error in batch prediction: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
+# GET endpoint to retrieve latest visualizations
+@app.get("/retrain/")
+async def get_latest_visualizations():
+    """Retrieve the latest training visualizations"""
+    try:
+        if not last_visualizations:
+            raise HTTPException(status_code=404, detail="No visualizations available. Please retrain the model first.")
+        return {
+            "status": "success",
+            "visualizations": last_visualizations
+        }
+    except Exception as e:
+        logger.error(f"Error fetching visualizations: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error fetching visualizations: {str(e)}")
+
 # POST endpoint for retraining the model
 @app.post("/retrain/")
 async def retrain_model(file: UploadFile = File(...)):
     """Retrain the model with a new dataset and provide metrics and visualizations"""
-    global model, scaler, label_encoders, target_encoder
+    global model, scaler, label_encoders, target_encoder, last_visualizations
     try:
         logger.info(f"Received retrain request with file: {file.filename}")
         contents = await file.read()
@@ -314,8 +329,13 @@ async def retrain_model(file: UploadFile = File(...)):
         y_pred = np.argmax(new_model.predict(X_test, verbose=0), axis=1)
         metrics = calculate_metrics(y_test, y_pred)
         
-        # Generate visualizations
+        # Generate and store visualizations
         visualizations = generate_visualizations(history, y_test, y_pred, new_target_encoder)
+        last_visualizations = {
+            "training_history": f"data:image/png;base64,{visualizations['training_history']}",
+            "confusion_matrix": f"data:image/png;base64,{visualizations['confusion_matrix']}",
+            "class_distribution": f"data:image/png;base64,{visualizations['class_distribution']}"
+        }
         
         # Save model and preprocessors
         new_model.save('drug_prescription_model.keras', overwrite=True)
@@ -337,13 +357,8 @@ async def retrain_model(file: UploadFile = File(...)):
             "test_loss": float(test_loss),
             "test_accuracy": float(test_accuracy),
             "metrics": metrics,
-            "visualizations": {
-                "training_history": f"data:image/png;base64,{visualizations['training_history']}",
-                "confusion_matrix": f"data:image/png;base64,{visualizations['confusion_matrix']}",
-                "class_distribution": f"data:image/png;base64,{visualizations['class_distribution']}"
-            },
-            "dataset_size": len(df),
             "num_classes": num_classes
+            # Removed "dataset_size" from response as per requirement
         }
     except HTTPException as e:
         raise e
